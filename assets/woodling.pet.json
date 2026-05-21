@@ -1,0 +1,28 @@
+{
+  "id": "codex-woodling",
+  "displayName": "Codex Woodling",
+  "description": "A small pixel-art wooden coding companion with explicit agent states.",
+  "spritesheet": "codex_woodling_spritesheet.png",
+  "spritesheetLeft": "codex_woodling_spritesheet_left.png",
+  "frameWidth": 64,
+  "frameHeight": 64,
+  "framesPerState": 4,
+  "scale": 1,
+  "states": [
+    "idle",
+    "thinking",
+    "coding",
+    "terminal",
+    "searching",
+    "success",
+    "falling",
+    "error"
+  ],
+  "aliases": {
+    "writing": "coding",
+    "running": "terminal",
+    "reading": "searching",
+    "done": "success",
+    "stuck": "error"
+  }
+}

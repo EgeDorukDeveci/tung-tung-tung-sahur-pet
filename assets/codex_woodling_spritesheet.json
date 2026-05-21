@@ -1,0 +1,33 @@
+{
+  "name": "Codex Woodling",
+  "frame_width": 64,
+  "frame_height": 64,
+  "frames_per_state": 4,
+  "states": [
+    "idle",
+    "thinking",
+    "coding",
+    "terminal",
+    "searching",
+    "success",
+    "falling",
+    "error"
+  ],
+  "style": "transparent low-resolution pixel art, warm wood palette",
+  "palette": {
+    "clear": "#00000000",
+    "outline": "#4a2d1cff",
+    "dark": "#683d1fff",
+    "mid": "#b77036ff",
+    "wood": "#cf8b46ff",
+    "light": "#eaab5dff",
+    "cream": "#ffe7a8ff",
+    "eye": "#1f1612ff",
+    "white": "#fff6e0ff",
+    "blue": "#53acbeff",
+    "green": "#77cc6fff",
+    "yellow": "#ffd557ff",
+    "red": "#da5445ff",
+    "purple": "#9670d6ff"
+  }
+}
