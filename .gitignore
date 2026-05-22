@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+.codex_woodling_control.json
+.codex_woodling_finish
+
+dist/
+openpets/
+
+# Runtime control files live outside the repo, but keep local accidents out.
+control.json
+finish.trigger
+woodling.pid

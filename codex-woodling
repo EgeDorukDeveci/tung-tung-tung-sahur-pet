@@ -1,7 +1,0 @@
-#!/usr/bin/env sh
-SCRIPT_PATH=$0
-if command -v readlink >/dev/null 2>&1; then
-  SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")
-fi
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
-exec python3 "$SCRIPT_DIR/codex_woodling.py" "$@"
