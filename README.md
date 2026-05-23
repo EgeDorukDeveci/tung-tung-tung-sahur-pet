@@ -1,62 +1,73 @@
 # Codex Woodling
 
-A tiny OpenPets-inspired desktop pet runtime for the custom Woodling character.
-It is not OpenPets and does not depend on OpenPets.
+A tiny always-on desktop pet for Codex.
 
-## Start
+This project is back to one character only: Codex Woodling.
+
+## Use
+
+There is a desktop launcher at:
+
+```text
+C:\Users\egedo\Desktop\Codex Woodling.vbs
+```
+
+Double-click it to wake Woodling. It starts the pet if it is not already
+running. The launcher runs `pythonw.exe` directly, so it should not open a
+terminal window.
+
+The Windows startup launcher is intentionally not installed right now. Keep it
+off until the hidden launcher is confirmed stable.
+
+## Behavior
+
+- Woodling runs in the background.
+- Click Woodling to wake it.
+- If Codex is inactive for 5 minutes, Woodling walks to the bottom-left corner
+  and sleeps.
+- If Codex appears closed/offline, Woodling shows the error animation.
+- Codex hooks still drive the active states: thinking, searching, coding,
+  terminal, success, and error.
+
+## Commands
 
 From PowerShell:
 
 ```powershell
 cd "C:\Users\egedo\Desktop\tung tung tung sahur pet"
-.\woodling.cmd start
-```
-
-The pet runs detached, stays on the bottom of the screen, walks left/right, and
-falls back to the floor if you drag it upward and release it.
-
-## Control
-
-```powershell
-.\woodling.cmd idle
+.\woodling.cmd wake
+.\woodling.cmd status
+.\woodling.cmd sleeping
 .\woodling.cmd thinking 10
 .\woodling.cmd coding 10
 .\woodling.cmd terminal 10
 .\woodling.cmd searching 10
-.\woodling.cmd success 5
-.\woodling.cmd error 10
 .\woodling.cmd jump
-```
-
-Stop it:
-
-```powershell
 .\woodling.cmd stop
 ```
 
-## From WSL
+Reinstall startup launcher:
 
-The status command works from WSL too because the control file lives in the
-shared Windows user folder:
-
-```bash
-python3 "/mnt/c/Users/egedo/Desktop/tung tung tung sahur pet/app.py" --status thinking --duration 10
+```powershell
+.\woodling.cmd install-startup
 ```
 
-## Pet Format
+## Codex Hooks
 
-The pet manifest is:
+The hook is installed globally at:
 
 ```text
-assets/woodling.pet.json
+C:\Users\egedo\.codex\hooks.json
 ```
 
-It declares:
+It calls:
 
-- sprite sheets
-- frame size
-- frames per state
-- state names
-- aliases
+```text
+codex_woodling_hook.py
+```
 
-The runtime reads this manifest and displays the matching animation state.
+The debug activity log is:
+
+```text
+C:\Users\egedo\AppData\Local\CodexWoodling\codex_activity.log
+```

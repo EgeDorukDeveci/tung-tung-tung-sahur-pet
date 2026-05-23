@@ -16,13 +16,17 @@
     "searching",
     "success",
     "falling",
-    "error"
+    "error",
+    "sleeping"
   ],
   "aliases": {
     "writing": "coding",
     "running": "terminal",
     "reading": "searching",
     "done": "success",
-    "stuck": "error"
+    "stuck": "error",
+    "sleep": "sleeping",
+    "asleep": "sleeping",
+    "wake": "idle"
   }
 }

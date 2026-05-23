@@ -27,10 +27,12 @@ WINDOW_PAD = 10
 FLOOR_GAP = 40
 WALK_SPEED = 30.0
 FPS_MS = 33
-SUCCESS_DURATION = 4.0
 SUCCESS_JUMP_VELOCITY = -285.0
 JUMP_GRAVITY = 900.0
 FALL_GRAVITY = 1250.0
+SLEEP_AFTER_SECONDS = 300.0
+CODEX_OFFLINE_AFTER_SECONDS = 20.0
+ACTIVITY_LOG_NAME = "codex_activity.log"
 
 
 def control_dir():
@@ -57,6 +59,7 @@ def control_dir():
 CONTROL_DIR = control_dir()
 CONTROL_PATH = os.path.join(CONTROL_DIR, "control.json")
 PID_PATH = os.path.join(CONTROL_DIR, "woodling.pid")
+ACTIVITY_LOG_PATH = os.path.join(CONTROL_DIR, ACTIVITY_LOG_NAME)
 
 
 def load_manifest():
@@ -79,7 +82,7 @@ def normalize_state(state):
     return state
 
 
-def send_command(state, duration=6.0):
+def send_command(state="idle", duration=6.0):
     os.makedirs(CONTROL_DIR, exist_ok=True)
     payload = {
         "state": normalize_state(state),
@@ -113,6 +116,73 @@ def read_control_file():
         return None
 
 
+def read_pid():
+    try:
+        with open(PID_PATH, "r", encoding="utf-8") as f:
+            return int(f.read().strip())
+    except Exception:
+        return None
+
+
+def process_alive(pid):
+    if not pid:
+        return False
+    if os.name == "nt" or os.path.exists("/mnt/c/Windows/System32/tasklist.exe"):
+        try:
+            output = subprocess.check_output(
+                ["tasklist.exe" if os.name != "nt" else "tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            return str(pid) in output
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def print_status():
+    pid = read_pid()
+    payload = read_control_file() or {}
+    running = process_alive(pid)
+    print(f"running: {'yes' if running else 'no'}")
+    print("pet: codex-woodling")
+    if pid:
+        print(f"{'pid' if running else 'last pid'}: {pid}")
+    if payload.get("state"):
+        print(f"last state: {payload.get('state')}")
+
+
+def last_codex_activity_time():
+    times = []
+    payload = read_control_file() or {}
+    state = payload.get("state")
+    if state and state not in {"sleeping", "idle", "error"}:
+        times.append(float(payload.get("sentAt") or 0))
+    try:
+        times.append(os.path.getmtime(ACTIVITY_LOG_PATH))
+    except Exception:
+        pass
+    return max(times) if times else 0.0
+
+
+def codex_process_alive():
+    if os.name != "nt" and not os.path.exists("/mnt/c/Windows/System32/tasklist.exe"):
+        return True
+    try:
+        output = subprocess.check_output(
+            ["tasklist.exe" if os.name != "nt" else "tasklist"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return "Codex.exe" in output
+    except Exception:
+        return True
+
+
 def drain_socket(sock):
     commands = []
     while True:
@@ -131,6 +201,10 @@ def drain_socket(sock):
 
 def start_detached():
     py = sys.executable or "python"
+    if os.name == "nt":
+        pyw = os.path.join(os.path.dirname(py), "pythonw.exe")
+        if os.path.exists(pyw):
+            py = pyw
     flags = 0
     kwargs = {
         "stdout": subprocess.DEVNULL,
@@ -190,9 +264,14 @@ class WoodlingApp(tk.Tk):
         self.phase = 0.0
         self.last_tick = time.time()
         self.walk_vx = -WALK_SPEED
+        self.target_x = None
         self.air_y = 0.0
         self.air_vy = 0.0
         self.drag_offset = None
+        self.drag_start = None
+        self.last_activity = time.time()
+        self.last_codex_seen = time.time()
+        self.user_wake_until = 0.0
 
         self.bind("<ButtonPress-1>", self.start_drag)
         self.bind("<B1-Motion>", self.drag)
@@ -235,7 +314,7 @@ class WoodlingApp(tk.Tk):
         return self.winfo_screenheight() - self.window_h - FLOOR_GAP
 
     def place_on_floor(self):
-        x = self.winfo_screenwidth() - self.window_w - 20
+        x = 12
         self.geometry(f"+{max(0, x)}+{max(0, self.floor_y())}")
 
     def current_visual_state(self):
@@ -249,9 +328,17 @@ class WoodlingApp(tk.Tk):
     def set_state(self, state, duration=6.0):
         self.status = normalize_state(state)
         self.forced_until = time.time() + duration
+        self.last_activity = time.time()
+        if self.status not in {"sleeping", "error"}:
+            self.target_x = None
         if self.status == "success":
             self.air_y = 0.0
             self.air_vy = SUCCESS_JUMP_VELOCITY
+
+    def wake(self):
+        self.user_wake_until = time.time() + 300.0
+        self.target_x = None
+        self.set_state("idle", 20.0)
 
     def poll_control(self):
         commands = drain_socket(self.server)
@@ -271,6 +358,26 @@ class WoodlingApp(tk.Tk):
             self.set_state(state, duration)
         self.after(120, self.poll_control)
 
+    def monitor_codex(self, now):
+        activity = last_codex_activity_time()
+        if activity:
+            self.last_activity = max(self.last_activity, activity)
+        if codex_process_alive():
+            self.last_codex_seen = now
+        elif now - self.last_codex_seen > CODEX_OFFLINE_AFTER_SECONDS:
+            if self.status != "error":
+                self.status = "error"
+                self.forced_until = now + 60.0
+            self.target_x = 12
+            return
+        if now < self.user_wake_until or self.status in {"error", "falling"} or self.air_y < 0:
+            return
+        if now - self.last_activity >= SLEEP_AFTER_SECONDS:
+            if self.status != "sleeping":
+                self.status = "sleeping"
+                self.forced_until = 0.0
+            self.target_x = 12
+
     def tick(self):
         now = time.time()
         dt = max(0.001, min(0.08, now - self.last_tick))
@@ -279,6 +386,7 @@ class WoodlingApp(tk.Tk):
         if self.forced_until and now >= self.forced_until:
             self.status = "idle"
             self.forced_until = 0.0
+        self.monitor_codex(now)
 
         bpm = {
             "idle": 42,
@@ -289,6 +397,7 @@ class WoodlingApp(tk.Tk):
             "success": 130,
             "falling": 130,
             "error": 160,
+            "sleeping": 26,
         }.get(self.status, 80)
         self.phase = (self.phase + (2 * math.pi) * (bpm / 60.0) * dt) % (2 * math.pi)
         self.frame = int((self.phase / (2 * math.pi)) * self.frames_per_state) % self.frames_per_state
@@ -310,9 +419,19 @@ class WoodlingApp(tk.Tk):
             self.air_vy = 0.0
 
     def walk(self, dt):
-        x = self.winfo_x() + self.walk_vx * dt
+        x = self.winfo_x()
         max_x = self.winfo_screenwidth() - self.window_w
-        if x <= 0 or x >= max_x:
+        if self.target_x is not None:
+            dx = self.target_x - x
+            step = max(-WALK_SPEED * dt, min(WALK_SPEED * dt, dx))
+            x += step
+            if abs(dx) < 2:
+                x = self.target_x
+        elif self.status == "sleeping":
+            x = max(0, min(max_x, x))
+        else:
+            x += self.walk_vx * dt
+        if self.target_x is None and self.status != "sleeping" and (x <= 0 or x >= max_x):
             self.walk_vx *= -1
             self.phase = 0.0
             x = max(0, min(max_x, x))
@@ -327,6 +446,7 @@ class WoodlingApp(tk.Tk):
 
     def start_drag(self, event):
         self.drag_offset = (event.x_root - self.winfo_x(), event.y_root - self.winfo_y())
+        self.drag_start = (event.x_root, event.y_root)
 
     def drag(self, event):
         if self.drag_offset:
@@ -335,6 +455,11 @@ class WoodlingApp(tk.Tk):
             self.geometry(f"+{x}+{y}")
 
     def release_drag(self, _event):
+        was_click = False
+        if self.drag_start:
+            dx = abs(_event.x_root - self.drag_start[0])
+            dy = abs(_event.y_root - self.drag_start[1])
+            was_click = dx <= 4 and dy <= 4
         floor = self.floor_y()
         max_x = self.winfo_screenwidth() - self.window_w
         x = max(0, min(max_x, self.winfo_x()))
@@ -342,10 +467,13 @@ class WoodlingApp(tk.Tk):
         self.air_vy = 35.0 if self.air_y < 0 else 0.0
         self.geometry(f"+{int(x)}+{max(0, int(floor + self.air_y))}")
         self.drag_offset = None
+        self.drag_start = None
+        if was_click:
+            self.wake()
 
     def menu(self, event):
         menu = tk.Menu(self, tearoff=0)
-        for state in ("idle", "thinking", "coding", "terminal", "searching", "success", "error"):
+        for state in ("idle", "sleeping", "thinking", "coding", "terminal", "searching", "success", "error"):
             menu.add_command(label=state.title(), command=lambda s=state: self.set_state(s, 6))
         menu.add_separator()
         menu.add_command(label="Quit", command=self.destroy)
@@ -354,22 +482,31 @@ class WoodlingApp(tk.Tk):
 
 def usage():
     states = "|".join(sorted(STATES))
-    print(f"Usage: app.py --serve | --start | --status <{states}> [--duration seconds] | --stop")
+    print(f"Usage: app.py --serve | --start | --health | --status <{states}> [--duration seconds] | --stop")
 
 
 def stop_existing():
-    if os.name != "nt":
+    pid = read_pid()
+    if pid:
+        if os.name == "nt":
+            subprocess.call(["taskkill", "/PID", str(pid), "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            try:
+                os.kill(pid, 15)
+            except OSError:
+                pass
         return
-    subprocess.call(
-        [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*tung tung tung sahur pet*app.py*' -or $_.CommandLine -like '*woodlingctl.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    if os.name == "nt":
+        subprocess.call(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*tung tung tung sahur pet*app.py*' -or $_.CommandLine -like '*woodlingctl.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def main():
@@ -391,6 +528,10 @@ def main():
 
     if "--stop" in args:
         stop_existing()
+        return 0
+
+    if "--health" in args:
+        print_status()
         return 0
 
     if "--status" in args:

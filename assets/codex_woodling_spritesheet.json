@@ -11,7 +11,8 @@
     "searching",
     "success",
     "falling",
-    "error"
+    "error",
+    "sleeping"
   ],
   "style": "transparent low-resolution pixel art, warm wood palette",
   "palette": {

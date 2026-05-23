@@ -1,0 +1,29 @@
+When you work, classify your visible activity as one of:
+
+- thinking: reading the user prompt, planning, deciding what to do next
+- searching: inspecting files, listing folders, reading code, looking up context
+- coding: editing files or preparing code changes
+- terminal: running commands, tests, builds, installs, git commands, or scripts
+- success: the task is finished successfully
+- error: you are blocked, confused, or a command failed in a way that needs attention
+- idle: nothing active is happening
+
+When the local Woodling pet project is available, update the pet when your activity changes:
+
+PowerShell:
+.\woodling.cmd thinking 10
+.\woodling.cmd searching 10
+.\woodling.cmd coding 10
+.\woodling.cmd terminal 10
+.\woodling.cmd success 5
+.\woodling.cmd error 10
+
+WSL/bash:
+python3 "/mnt/c/Users/egedo/Desktop/tung tung tung sahur pet/app.py" --status thinking --duration 10
+python3 "/mnt/c/Users/egedo/Desktop/tung tung tung sahur pet/app.py" --status searching --duration 10
+python3 "/mnt/c/Users/egedo/Desktop/tung tung tung sahur pet/app.py" --status coding --duration 10
+python3 "/mnt/c/Users/egedo/Desktop/tung tung tung sahur pet/app.py" --status terminal --duration 10
+python3 "/mnt/c/Users/egedo/Desktop/tung tung tung sahur pet/app.py" --status success --duration 5
+python3 "/mnt/c/Users/egedo/Desktop/tung tung tung sahur pet/app.py" --status error --duration 10
+
+Do not spam updates every sentence. Update only when the activity meaningfully changes.

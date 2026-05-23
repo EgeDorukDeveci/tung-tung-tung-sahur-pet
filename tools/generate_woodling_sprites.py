@@ -20,6 +20,7 @@ STATES = [
     "success",
     "falling",
     "error",
+    "sleeping",
 ]
 
 P = {
@@ -46,9 +47,8 @@ def img(w, h):
 
 def rect(im, x, y, w, h, c):
     for yy in range(max(0, y), min(len(im), y + h)):
-        row = im[yy]
-        for xx in range(max(0, x), min(len(row), x + w)):
-            row[xx] = c
+        for xx in range(max(0, x), min(len(im[yy]), x + w)):
+            im[yy][xx] = c
 
 
 def px(im, x, y, c):
@@ -78,14 +78,13 @@ def line(im, x0, y0, x1, y1, c, thick=1):
 def ellipse(im, cx, cy, rx, ry, c):
     for y in range(cy - ry, cy + ry + 1):
         for x in range(cx - rx, cx + rx + 1):
-            if ((x - cx) * (x - cx)) * ry * ry + ((y - cy) * (y - cy)) * rx * rx <= rx * rx * ry * ry:
+            if ((x - cx) ** 2) * ry * ry + ((y - cy) ** 2) * rx * rx <= rx * rx * ry * ry:
                 px(im, x, y, c)
 
 
-def rounded_log(im, x, y, w, h, frame, lean=0, squash=0):
+def rounded_log(im, x, y, w, h, lean=0, squash=0):
     yy = y + squash
     hh = h - squash
-    # Chunky rounded silhouette.
     rect(im, x + 3 + lean, yy, w - 6, 1, P["outline"])
     rect(im, x + 1 + lean, yy + 1, w - 2, 2, P["outline"])
     rect(im, x + lean, yy + 3, w, hh - 6, P["outline"])
@@ -98,12 +97,15 @@ def rounded_log(im, x, y, w, h, frame, lean=0, squash=0):
     for off in (10, 21):
         line(im, x + 7 + lean, yy + off, x + 9 + lean, yy + off + 5, P["mid"])
         line(im, x + w - 10 + lean, yy + off + 2, x + w - 12 + lean, yy + off + 7, P["dark"])
-    # Top rings.
     rect(im, x + 8 + lean, yy + 3, w - 16, 1, P["mid"])
     rect(im, x + 12 + lean, yy + 5, w - 24, 1, P["cream"])
 
 
 def eyes(im, x, y, mood, blink=False):
+    if mood == "sleeping":
+        line(im, x + 12, y + 15, x + 20, y + 13, P["eye"], 2)
+        line(im, x + 26, y + 13, x + 34, y + 15, P["eye"], 2)
+        return
     if blink:
         rect(im, x + 13, y + 15, 7, 2, P["eye"])
         rect(im, x + 26, y + 15, 7, 2, P["eye"])
@@ -138,14 +140,14 @@ def mouth(im, x, y, mood):
         px(im, x + 28, y + 30, P["eye"])
     elif mood == "focused":
         rect(im, x + 18, y + 27, 11, 2, P["eye"])
-        px(im, x + 19, y + 29, P["eye"])
-        px(im, x + 28, y + 29, P["eye"])
     elif mood == "coding":
         rect(im, x + 17, y + 27, 14, 4, P["eye"])
         rect(im, x + 19, y + 28, 10, 1, P["white"])
     elif mood == "falling":
         rect(im, x + 20, y + 26, 8, 8, P["eye"])
         rect(im, x + 22, y + 27, 4, 2, P["white"])
+    elif mood == "sleeping":
+        rect(im, x + 20, y + 28, 8, 2, P["eye"])
     elif mood == "success":
         rect(im, x + 16, y + 27, 15, 2, P["eye"])
         px(im, x + 17, y + 29, P["eye"])
@@ -158,6 +160,14 @@ def mouth(im, x, y, mood):
 
 def limbs(im, ox, oy, state, frame):
     bob = 1 if frame in (1, 2) else 0
+    if state == "sleeping":
+        line(im, ox + 14, oy + 37, ox + 5, oy + 43, P["outline"], 3)
+        line(im, ox + 39, oy + 37, ox + 49, oy + 43, P["outline"], 3)
+        line(im, ox + 21, oy + 49, ox + 15, oy + 58, P["outline"], 3)
+        line(im, ox + 33, oy + 49, ox + 40, oy + 58, P["outline"], 3)
+        rect(im, ox + 11, oy + 58, 8, 2, P["outline"])
+        rect(im, ox + 37, oy + 58, 8, 2, P["outline"])
+        return
     if state == "thinking":
         line(im, ox + 16, oy + 31, ox + 10, oy + 24, P["outline"], 3)
         line(im, ox + 10, oy + 24, ox + 14, oy + 17, P["outline"], 3)
@@ -185,7 +195,6 @@ def limbs(im, ox, oy, state, frame):
     else:
         line(im, ox + 14, oy + 32, ox + 7, oy + 41, P["outline"], 3)
         line(im, ox + 40, oy + 32, ox + 47, oy + 41, P["outline"], 3)
-    # Long awkward legs and flat feet.
     spread = -1 if frame in (1, 3) else 1
     if state == "thinking":
         spread = -3 if frame in (1, 2) else 3
@@ -207,22 +216,12 @@ def prop(im, state, frame):
         rect(im, x + 1, 17, 3, 2, P["yellow"])
         px(im, x + 2, 22, P["yellow"])
     elif state == "coding":
-        symbols = [("<", 8, 8), ("/", 50, 12), ("{}", 45, 46), (">", 12, 48)]
-        for s, x, y in symbols:
-            dy = -1 if (frame + x) % 2 else 1
-            if s == "<":
-                line(im, x + 4, y + dy, x, y + 3 + dy, P["blue"])
-                line(im, x, y + 3 + dy, x + 4, y + 6 + dy, P["blue"])
-            elif s == ">":
-                line(im, x, y + dy, x + 4, y + 3 + dy, P["blue"])
-                line(im, x + 4, y + 3 + dy, x, y + 6 + dy, P["blue"])
-            elif s == "/":
-                line(im, x, y + 6 + dy, x + 4, y + dy, P["green"])
-            else:
-                rect(im, x, y + dy, 2, 6, P["purple"])
-                rect(im, x + 7, y + dy, 2, 6, P["purple"])
-                px(im, x + 2, y + dy, P["purple"])
-                px(im, x + 6, y + dy, P["purple"])
+        line(im, 12, 8, 8, 11, P["blue"])
+        line(im, 8, 11, 12, 14, P["blue"])
+        line(im, 52, 10, 56, 13, P["green"])
+        line(im, 56, 13, 52, 16, P["green"])
+        rect(im, 45, 46 + frame % 2, 2, 7, P["purple"])
+        rect(im, 53, 46 + frame % 2, 2, 7, P["purple"])
     elif state == "terminal":
         rect(im, 6, 43, 24, 14, P["outline"])
         rect(im, 8, 45, 20, 10, (35, 38, 32, 255))
@@ -245,8 +244,8 @@ def prop(im, state, frame):
                 px(im, x + 2, y, P["yellow"])
                 px(im, x, y, P["white"])
     elif state == "falling":
-        for x, y in ((12, 18), (52, 21)):
-            rect(im, x + frame % 2, y, 2, 2, P["blue"])
+        rect(im, 12 + frame % 2, 18, 2, 2, P["blue"])
+        rect(im, 52 + frame % 2, 21, 2, 2, P["blue"])
     elif state == "error":
         rect(im, 48, 12, 9, 8, P["red"])
         rect(im, 51, 14, 2, 4, P["white"])
@@ -254,6 +253,11 @@ def prop(im, state, frame):
         if frame % 2:
             rect(im, 8, 42, 6, 4, (120, 110, 120, 170))
             rect(im, 12, 39, 4, 3, (120, 110, 120, 120))
+    elif state == "sleeping":
+        x = 45 + frame
+        rect(im, x, 13, 5, 2, P["blue"])
+        rect(im, x + 4, 10, 5, 2, P["blue"])
+        rect(im, x + 8, 7, 5, 2, P["blue"])
 
 
 def frame(state, i):
@@ -289,12 +293,16 @@ def frame(state, i):
         lean = -2 if i % 2 else 2
         bob = 2
         mood = "error"
+    elif state == "sleeping":
+        bob = 2 if i in (1, 2) else 1
+        lean = -3
+        squash = 2
+        mood = "sleeping"
     ox = 11 + lean
     oy = 4 + bob
     limbs(im, ox, oy, state, i)
-    rounded_log(im, ox + 6, oy + 4, 34, 46, i, 0, squash)
-    blink = state == "idle" and i == 2
-    eyes(im, ox + 6, oy + 4, mood, blink)
+    rounded_log(im, ox + 6, oy + 4, 34, 46, 0, squash)
+    eyes(im, ox + 6, oy + 4, mood, state == "idle" and i == 2)
     mouth(im, ox + 6, oy + 4, mood)
     prop(im, state, i)
     return im
@@ -353,9 +361,35 @@ def main():
     left_sheet_path = os.path.join(OUT_DIR, "codex_woodling_spritesheet_left.png")
     preview_path = os.path.join(OUT_DIR, "codex_woodling_preview_x4.png")
     meta_path = os.path.join(OUT_DIR, "codex_woodling_spritesheet.json")
+    manifest_path = os.path.join(OUT_DIR, "woodling.pet.json")
     write_png(sheet_path, compose_sheet(1))
     write_png(left_sheet_path, flip_horizontal(compose_sheet(1)))
     write_png(preview_path, compose_sheet(4))
+    manifest = {
+        "id": "codex-woodling",
+        "displayName": "Codex Woodling",
+        "description": "A small pixel-art wooden coding companion with explicit agent states.",
+        "spritesheet": "codex_woodling_spritesheet.png",
+        "spritesheetLeft": "codex_woodling_spritesheet_left.png",
+        "frameWidth": FRAME_W,
+        "frameHeight": FRAME_H,
+        "framesPerState": FRAMES,
+        "scale": 1,
+        "states": STATES,
+        "aliases": {
+            "writing": "coding",
+            "running": "terminal",
+            "reading": "searching",
+            "done": "success",
+            "stuck": "error",
+            "sleep": "sleeping",
+            "asleep": "sleeping",
+            "wake": "idle",
+        },
+    }
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+        f.write("\n")
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(
             {
@@ -375,6 +409,7 @@ def main():
     print(left_sheet_path)
     print(preview_path)
     print(meta_path)
+    print(manifest_path)
 
 
 if __name__ == "__main__":
