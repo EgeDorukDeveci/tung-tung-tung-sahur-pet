@@ -66,6 +66,16 @@ It calls:
 codex_woodling_hook.py
 ```
 
+The hook is intentionally safe: it only writes a tiny JSON file and a debug
+log. It does not start Woodling, does not call `woodling.cmd`, and does not run
+terminal/process-check commands.
+
+Woodling reads:
+
+```text
+C:\Users\egedo\AppData\Local\CodexWoodling\activity.json
+```
+
 The debug activity log is:
 
 ```text

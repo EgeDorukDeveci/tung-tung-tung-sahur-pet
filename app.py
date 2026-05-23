@@ -27,12 +27,15 @@ WINDOW_PAD = 10
 FLOOR_GAP = 40
 WALK_SPEED = 30.0
 FPS_MS = 33
+POLL_MS = 45
 SUCCESS_JUMP_VELOCITY = -285.0
 JUMP_GRAVITY = 900.0
 FALL_GRAVITY = 1250.0
 SLEEP_AFTER_SECONDS = 300.0
 CODEX_OFFLINE_AFTER_SECONDS = 20.0
 ACTIVITY_LOG_NAME = "codex_activity.log"
+ACTIVITY_NAME = "activity.json"
+MAX_ACTIVITY_AGE_SECONDS = 90.0
 
 
 def control_dir():
@@ -60,6 +63,8 @@ CONTROL_DIR = control_dir()
 CONTROL_PATH = os.path.join(CONTROL_DIR, "control.json")
 PID_PATH = os.path.join(CONTROL_DIR, "woodling.pid")
 ACTIVITY_LOG_PATH = os.path.join(CONTROL_DIR, ACTIVITY_LOG_NAME)
+ACTIVITY_PATH = os.path.join(CONTROL_DIR, ACTIVITY_NAME)
+RUNTIME_STATUS_PATH = os.path.join(CONTROL_DIR, "runtime_status.json")
 
 
 def load_manifest():
@@ -109,11 +114,28 @@ def make_server_socket():
 
 
 def read_control_file():
+    return read_json_file(CONTROL_PATH)
+
+
+def read_activity_file():
+    return read_json_file(ACTIVITY_PATH)
+
+
+def read_json_file(path):
     try:
-        with open(CONTROL_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
+
+
+def write_runtime_status(state):
+    try:
+        os.makedirs(CONTROL_DIR, exist_ok=True)
+        with open(RUNTIME_STATUS_PATH, "w", encoding="utf-8") as f:
+            json.dump({"state": state, "sentAt": time.time()}, f)
+    except Exception:
+        pass
 
 
 def read_pid():
@@ -127,16 +149,8 @@ def read_pid():
 def process_alive(pid):
     if not pid:
         return False
-    if os.name == "nt" or os.path.exists("/mnt/c/Windows/System32/tasklist.exe"):
-        try:
-            output = subprocess.check_output(
-                ["tasklist.exe" if os.name != "nt" else "tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            return str(pid) in output
-        except Exception:
-            return False
+    if os.name == "nt":
+        return windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -144,41 +158,113 @@ def process_alive(pid):
         return False
 
 
+def windows_pid_alive(pid):
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(process_query_limited_information, False, int(pid))
+        if not handle:
+            return False
+        kernel32.CloseHandle(handle)
+        return True
+    except Exception:
+        return False
+
+
 def print_status():
     pid = read_pid()
     payload = read_control_file() or {}
+    activity = read_activity_file() or {}
+    runtime = read_json_file(RUNTIME_STATUS_PATH) or {}
+    runtime_time = float(runtime.get("sentAt") or 0)
     running = process_alive(pid)
     print(f"running: {'yes' if running else 'no'}")
     print("pet: codex-woodling")
     if pid:
         print(f"{'pid' if running else 'last pid'}: {pid}")
-    if payload.get("state"):
+    payload_time = float(payload.get("sentAt") or 0)
+    if payload.get("state") and payload_time >= runtime_time - 0.5 and time.time() - payload_time <= MAX_ACTIVITY_AGE_SECONDS:
         print(f"last state: {payload.get('state')}")
+    if runtime.get("state"):
+        print(f"current visual state: {runtime.get('state')}")
+    sent_at = float(activity.get("sentAt") or 0)
+    if activity.get("state") and sent_at >= runtime_time - 0.5 and time.time() - sent_at <= MAX_ACTIVITY_AGE_SECONDS:
+        print(f"last codex activity: {activity.get('state')}")
 
 
-def last_codex_activity_time():
+def last_codex_activity_time(started_at=0.0):
     times = []
     payload = read_control_file() or {}
     state = payload.get("state")
-    if state and state not in {"sleeping", "idle", "error"}:
+    sent_at = float(payload.get("sentAt") or 0)
+    if state and state not in {"sleeping", "idle", "error"} and sent_at >= started_at - 0.5:
         times.append(float(payload.get("sentAt") or 0))
     try:
         times.append(os.path.getmtime(ACTIVITY_LOG_PATH))
     except Exception:
         pass
+    activity = read_activity_file() or {}
+    state = activity.get("state")
+    sent_at = float(activity.get("sentAt") or 0)
+    if (
+        state
+        and state not in {"sleeping", "idle", "error"}
+        and sent_at >= started_at - 0.5
+        and time.time() - sent_at <= MAX_ACTIVITY_AGE_SECONDS
+    ):
+        times.append(sent_at)
     return max(times) if times else 0.0
 
 
 def codex_process_alive():
-    if os.name != "nt" and not os.path.exists("/mnt/c/Windows/System32/tasklist.exe"):
+    if os.name != "nt":
         return True
     try:
-        output = subprocess.check_output(
-            ["tasklist.exe" if os.name != "nt" else "tasklist"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        return "Codex.exe" in output
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        snapshot_flag = 0x00000002
+        invalid_handle = ctypes.c_void_p(-1).value
+        ulong_ptr = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
+        class ProcessEntry32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ulong_ptr),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry32)]
+        kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry32)]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        snapshot = kernel32.CreateToolhelp32Snapshot(snapshot_flag, 0)
+        if snapshot == invalid_handle:
+            return True
+        entry = ProcessEntry32()
+        entry.dwSize = ctypes.sizeof(ProcessEntry32)
+        found = False
+        ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while ok:
+            if entry.szExeFile.lower() == "codex.exe":
+                found = True
+                break
+            ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        kernel32.CloseHandle(snapshot)
+        return found
     except Exception:
         return True
 
@@ -257,8 +343,11 @@ class WoodlingApp(tk.Tk):
         self.images_left = self.load_images(self.manifest["spritesheetLeft"])
 
         self.status = "idle"
+        write_runtime_status(self.status)
         self.forced_until = 0.0
-        self.last_nonce = ""
+        self.last_socket_nonce = ""
+        self.last_control_nonce = ""
+        self.last_activity_nonce = ""
         self.last_file_nonce = ""
         self.frame = 0
         self.phase = 0.0
@@ -269,9 +358,13 @@ class WoodlingApp(tk.Tk):
         self.air_vy = 0.0
         self.drag_offset = None
         self.drag_start = None
+        self.started_at = time.time()
         self.last_activity = time.time()
         self.last_codex_seen = time.time()
+        self.last_codex_check = 0.0
+        self.codex_alive_cached = True
         self.user_wake_until = 0.0
+        self.pending_success_at = 0.0
 
         self.bind("<ButtonPress-1>", self.start_drag)
         self.bind("<B1-Motion>", self.drag)
@@ -280,7 +373,7 @@ class WoodlingApp(tk.Tk):
 
         self.place_on_floor()
         self.after(FPS_MS, self.tick)
-        self.after(120, self.poll_control)
+        self.after(POLL_MS, self.poll_control)
 
     def load_images(self, sheet_name):
         path = os.path.join(APP_DIR, "assets", sheet_name)
@@ -327,8 +420,10 @@ class WoodlingApp(tk.Tk):
 
     def set_state(self, state, duration=6.0):
         self.status = normalize_state(state)
+        write_runtime_status(self.status)
         self.forced_until = time.time() + duration
-        self.last_activity = time.time()
+        if self.status != "sleeping":
+            self.last_activity = time.time()
         if self.status not in {"sleeping", "error"}:
             self.target_x = None
         if self.status == "success":
@@ -336,45 +431,89 @@ class WoodlingApp(tk.Tk):
             self.air_vy = SUCCESS_JUMP_VELOCITY
 
     def wake(self):
-        self.user_wake_until = time.time() + 300.0
+        now = time.time()
+        self.user_wake_until = now + 300.0
+        self.last_activity = now
         self.target_x = None
         self.set_state("idle", 20.0)
 
     def poll_control(self):
         commands = drain_socket(self.server)
         file_payload = read_control_file()
-        if file_payload:
+        control_time = float((file_payload or {}).get("sentAt") or 0)
+        if file_payload and control_time >= self.started_at - 0.5:
+            file_payload["_source"] = "control"
             commands.append(file_payload)
+        activity_payload = read_activity_file()
+        activity_time = float((activity_payload or {}).get("sentAt") or 0)
+        if (
+            activity_payload
+            and activity_time >= self.started_at - 0.5
+            and time.time() - activity_time <= MAX_ACTIVITY_AGE_SECONDS
+        ):
+            activity_payload["_source"] = "codex_activity"
+            commands.append(activity_payload)
         for payload in commands:
             nonce = payload.get("nonce", "")
-            if not nonce or nonce == self.last_nonce:
+            source = payload.get("_source", "socket")
+            if not nonce:
+                continue
+            if source == "control" and nonce == self.last_control_nonce:
+                continue
+            if source == "codex_activity" and nonce == self.last_activity_nonce:
+                continue
+            if source == "socket" and nonce == self.last_socket_nonce:
                 continue
             try:
                 state = normalize_state(payload.get("state", "idle"))
                 duration = float(payload.get("duration", 6.0))
             except Exception:
                 continue
-            self.last_nonce = nonce
+            if source == "control":
+                self.last_control_nonce = nonce
+            elif source == "codex_activity":
+                self.last_activity_nonce = nonce
+            else:
+                self.last_socket_nonce = nonce
+            if source == "codex_activity":
+                if state == "success":
+                    self.pending_success_at = 0.0
+                elif payload.get("event") == "UserPromptSubmit":
+                    self.pending_success_at = 0.0
+                elif state not in {"idle", "sleeping", "error"}:
+                    self.pending_success_at = time.time() + min(25.0, max(5.0, duration + 1.0))
+                    if self.status == "sleeping":
+                        self.target_x = None
             self.set_state(state, duration)
-        self.after(120, self.poll_control)
+        self.after(POLL_MS, self.poll_control)
 
     def monitor_codex(self, now):
-        activity = last_codex_activity_time()
+        activity = last_codex_activity_time(self.started_at)
         if activity:
             self.last_activity = max(self.last_activity, activity)
-        if codex_process_alive():
+        if now - self.last_codex_check >= 5.0:
+            self.codex_alive_cached = codex_process_alive()
+            self.last_codex_check = now
+        if self.codex_alive_cached:
             self.last_codex_seen = now
         elif now - self.last_codex_seen > CODEX_OFFLINE_AFTER_SECONDS:
             if self.status != "error":
                 self.status = "error"
+                write_runtime_status(self.status)
                 self.forced_until = now + 60.0
             self.target_x = 12
             return
         if now < self.user_wake_until or self.status in {"error", "falling"} or self.air_y < 0:
             return
+        if self.pending_success_at and now >= self.pending_success_at:
+            self.pending_success_at = 0.0
+            if self.status not in {"success", "error", "sleeping"}:
+                self.set_state("success", 5.0)
+                return
         if now - self.last_activity >= SLEEP_AFTER_SECONDS:
             if self.status != "sleeping":
                 self.status = "sleeping"
+                write_runtime_status(self.status)
                 self.forced_until = 0.0
             self.target_x = 12
 
@@ -385,6 +524,7 @@ class WoodlingApp(tk.Tk):
 
         if self.forced_until and now >= self.forced_until:
             self.status = "idle"
+            write_runtime_status(self.status)
             self.forced_until = 0.0
         self.monitor_codex(now)
 

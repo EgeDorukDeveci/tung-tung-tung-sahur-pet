@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import json
 import os
-import subprocess
 import sys
 import time
 
 
 ROOT = os.path.dirname(os.path.realpath(__file__))
-APP = os.path.join(ROOT, "app.py")
 LOG_NAME = "codex_activity.log"
+ACTIVITY_NAME = "activity.json"
 
 
 def control_dir():
@@ -40,13 +39,22 @@ def log(activity, event, detail=""):
         pass
 
 
-def ping(activity, seconds):
-    subprocess.run(
-        [sys.executable, APP, "--status", activity, "--duration", str(seconds)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+def write_activity(activity, seconds, event, detail=""):
+    path = control_dir()
+    os.makedirs(path, exist_ok=True)
+    activity_path = os.path.join(path, ACTIVITY_NAME)
+    tmp_path = activity_path + ".tmp"
+    payload = {
+        "state": activity,
+        "duration": seconds,
+        "event": event,
+        "detail": detail,
+        "sentAt": time.time(),
+        "nonce": f"{time.time()}-{os.getpid()}",
+    }
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    os.replace(tmp_path, activity_path)
 
 
 def classify(event):
@@ -59,23 +67,23 @@ def classify(event):
     low = command.lower()
 
     if name == "UserPromptSubmit":
-        return "thinking", 20, "prompt"
+        return "thinking", 45, "prompt"
     if name == "Stop":
         return "success", 5, "turn-finished"
     if name == "PreToolUse":
         if tool in {"apply_patch", "Edit", "Write"}:
-            return "coding", 20, tool
+            return "coding", 5, tool
         if tool == "Bash":
             search_words = ("rg ", "grep", "find ", "ls", "dir", "cat ", "sed ", "head ", "tail ", "git show", "git diff", "git status")
             code_words = ("apply_patch", "python", "py ", "npm", "pnpm", "node", "pytest", "ruff", "tsc", "build", "git commit")
             if any(word in low for word in search_words):
-                return "searching", 14, command[:90]
+                return "searching", 4, command[:90]
             if any(word in low for word in code_words):
-                return "terminal", 14, command[:90]
-            return "terminal", 10, command[:90]
-        return "thinking", 10, tool
+                return "terminal", 4, command[:90]
+            return "terminal", 4, command[:90]
+        return "thinking", 4, tool
     if name == "PostToolUse":
-        return "thinking", 5, tool
+        return "thinking", 2, tool
     return "idle", 4, name or "unknown"
 
 
@@ -85,8 +93,9 @@ def main():
     except Exception:
         event = {}
     activity, seconds, detail = classify(event)
-    ping(activity, seconds)
-    log(activity, event.get("hook_event_name", "unknown"), detail)
+    hook_name = event.get("hook_event_name", "unknown")
+    write_activity(activity, seconds, hook_name, detail)
+    log(activity, hook_name, detail)
     return 0
 
 
