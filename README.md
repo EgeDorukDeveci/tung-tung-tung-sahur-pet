@@ -1,33 +1,65 @@
 # Codex Woodling
 
-A tiny always-on desktop pet for Codex.
+Codex Woodling is a tiny pixel-art desktop pet for Codex. It lives on the
+desktop, reacts to Codex activity, sleeps when nothing is happening, and wakes
+when you click it.
 
-This project is back to one character only: Codex Woodling.
+This project intentionally uses one character only: **Codex Woodling**.
 
-## Use
+## Start
 
-There is a desktop launcher at:
+Use the hidden desktop launcher:
 
 ```text
 C:\Users\egedo\Desktop\Codex Woodling.vbs
 ```
 
-Double-click it to wake Woodling. It starts the pet if it is not already
-running. The launcher runs `pythonw.exe` directly, so it should not open a
+Double-clicking it starts Woodling with `pythonw.exe`, so it should not open a
 terminal window.
 
-The Windows startup launcher is intentionally not installed right now. Keep it
-off until the hidden launcher is confirmed stable.
+Startup is intentionally disabled for now. Do not add the old `.cmd` launcher
+to Windows startup; that was the source of repeated terminal windows.
 
-## Behavior
+## What It Does
 
-- Woodling runs in the background.
 - Click Woodling to wake it.
-- If Codex is inactive for 5 minutes, Woodling walks to the bottom-left corner
-  and sleeps.
-- If Codex appears closed/offline, Woodling shows the error animation.
-- Codex hooks still drive the active states: thinking, searching, coding,
-  terminal, success, and error.
+- New Codex prompt: `thinking`.
+- Reading/searching files: `searching`.
+- Editing code: `coding`.
+- Running commands/tests: `terminal`.
+- Finished turn: `success` jump.
+- Codex inactive for 5 minutes: walk to bottom-left and `sleeping`.
+- Codex appears closed/offline: `error`.
+
+## Safe Hook Design
+
+Hooks are enabled, but they are file-only and safe:
+
+```text
+Codex hook -> writes activity.json
+Woodling app -> reads activity.json
+```
+
+The hook does **not** start Woodling, call `woodling.cmd`, run `tasklist`, or
+spawn a command chain.
+
+Hook config:
+
+```text
+C:\Users\egedo\.codex\hooks.json
+```
+
+Activity file:
+
+```text
+C:\Users\egedo\AppData\Local\CodexWoodling\activity.json
+```
+
+Debug log:
+
+```text
+C:\Users\egedo\AppData\Local\CodexWoodling\codex_activity.log
+```
 
 ## Commands
 
@@ -35,8 +67,8 @@ From PowerShell:
 
 ```powershell
 cd "C:\Users\egedo\Desktop\tung tung tung sahur pet"
-.\woodling.cmd wake
 .\woodling.cmd status
+.\woodling.cmd wake
 .\woodling.cmd sleeping
 .\woodling.cmd thinking 10
 .\woodling.cmd coding 10
@@ -46,38 +78,32 @@ cd "C:\Users\egedo\Desktop\tung tung tung sahur pet"
 .\woodling.cmd stop
 ```
 
-Reinstall startup launcher:
+## Troubleshooting
+
+If terminal windows start opening repeatedly:
+
+1. Empty or remove `C:\Users\egedo\.codex\hooks.json`.
+2. Remove any `Codex Woodling.cmd` or `Codex Woodling.vbs` file from Windows
+   Startup.
+3. Stop Woodling:
 
 ```powershell
-.\woodling.cmd install-startup
+cd "C:\Users\egedo\Desktop\tung tung tung sahur pet"
+.\woodling.cmd stop
 ```
 
-## Codex Hooks
-
-The hook is installed globally at:
+Then start only with:
 
 ```text
-C:\Users\egedo\.codex\hooks.json
+C:\Users\egedo\Desktop\Codex Woodling.vbs
 ```
 
-It calls:
-
-```text
-codex_woodling_hook.py
-```
-
-The hook is intentionally safe: it only writes a tiny JSON file and a debug
-log. It does not start Woodling, does not call `woodling.cmd`, and does not run
-terminal/process-check commands.
-
-Woodling reads:
+If old prompt states replay after reopening, remove:
 
 ```text
 C:\Users\egedo\AppData\Local\CodexWoodling\activity.json
+C:\Users\egedo\AppData\Local\CodexWoodling\control.json
 ```
 
-The debug activity log is:
-
-```text
-C:\Users\egedo\AppData\Local\CodexWoodling\codex_activity.log
-```
+The current app ignores stale activity from before the pet process started, but
+clearing those files is still a simple reset.

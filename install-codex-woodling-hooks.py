@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 
@@ -20,8 +22,9 @@ def codex_home():
 
 
 def hook_command():
-    script = HOOK_SCRIPT.replace("\\", "/")
-    return f'{sys.executable} "{script}"'
+    if os.name == "nt":
+        return subprocess.list2cmdline(["py", "-3", HOOK_SCRIPT])
+    return f"{shlex.quote(sys.executable)} {shlex.quote(HOOK_SCRIPT)}"
 
 
 def handler():
@@ -33,11 +36,8 @@ def handler():
     }
 
 
-def hook_group(matcher=None):
-    group = {"hooks": [handler()]}
-    if matcher is not None:
-        group["matcher"] = matcher
-    return group
+def hook_group():
+    return {"hooks": [handler()]}
 
 
 def is_woodling(group):
@@ -67,8 +67,8 @@ def main():
 
     hooks = data.setdefault("hooks", {})
     hooks["UserPromptSubmit"] = add_or_replace(hooks.get("UserPromptSubmit", []), hook_group())
-    hooks["PreToolUse"] = add_or_replace(hooks.get("PreToolUse", []), hook_group("Bash|apply_patch|Edit|Write"))
-    hooks["PostToolUse"] = add_or_replace(hooks.get("PostToolUse", []), hook_group("Bash|apply_patch|Edit|Write"))
+    hooks["PreToolUse"] = add_or_replace(hooks.get("PreToolUse", []), hook_group())
+    hooks["PostToolUse"] = add_or_replace(hooks.get("PostToolUse", []), hook_group())
     hooks["Stop"] = add_or_replace(hooks.get("Stop", []), hook_group())
 
     with open(path, "w", encoding="utf-8") as f:

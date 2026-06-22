@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 
 try:
     import tkinter as tk
@@ -36,6 +37,8 @@ CODEX_OFFLINE_AFTER_SECONDS = 20.0
 ACTIVITY_LOG_NAME = "codex_activity.log"
 ACTIVITY_NAME = "activity.json"
 MAX_ACTIVITY_AGE_SECONDS = 90.0
+HEARTBEAT_SECONDS = 1.0
+RUNTIME_STALE_SECONDS = 5.0
 
 
 def control_dir():
@@ -65,6 +68,7 @@ PID_PATH = os.path.join(CONTROL_DIR, "woodling.pid")
 ACTIVITY_LOG_PATH = os.path.join(CONTROL_DIR, ACTIVITY_LOG_NAME)
 ACTIVITY_PATH = os.path.join(CONTROL_DIR, ACTIVITY_NAME)
 RUNTIME_STATUS_PATH = os.path.join(CONTROL_DIR, "runtime_status.json")
+RUNTIME_LOG_PATH = os.path.join(CONTROL_DIR, "woodling_runtime.log")
 
 
 def load_manifest():
@@ -132,8 +136,19 @@ def read_json_file(path):
 def write_runtime_status(state):
     try:
         os.makedirs(CONTROL_DIR, exist_ok=True)
-        with open(RUNTIME_STATUS_PATH, "w", encoding="utf-8") as f:
-            json.dump({"state": state, "sentAt": time.time()}, f)
+        tmp_path = RUNTIME_STATUS_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump({"state": state, "sentAt": time.time(), "pid": os.getpid()}, f)
+        os.replace(tmp_path, RUNTIME_STATUS_PATH)
+    except Exception:
+        pass
+
+
+def log_runtime_error(message):
+    try:
+        os.makedirs(CONTROL_DIR, exist_ok=True)
+        with open(RUNTIME_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message.rstrip()}\n")
     except Exception:
         pass
 
@@ -156,6 +171,20 @@ def process_alive(pid):
         return True
     except OSError:
         return False
+
+
+def runtime_is_live(pid=None):
+    runtime = read_json_file(RUNTIME_STATUS_PATH) or {}
+    try:
+        runtime_pid = int(runtime.get("pid") or 0)
+        sent_at = float(runtime.get("sentAt") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not runtime_pid or (pid and runtime_pid != pid):
+        return False
+    if time.time() - sent_at > RUNTIME_STALE_SECONDS:
+        return False
+    return process_alive(runtime_pid)
 
 
 def windows_pid_alive(pid):
@@ -182,19 +211,21 @@ def print_status():
     activity = read_activity_file() or {}
     runtime = read_json_file(RUNTIME_STATUS_PATH) or {}
     runtime_time = float(runtime.get("sentAt") or 0)
-    running = process_alive(pid)
+    running = runtime_is_live(pid)
     print(f"running: {'yes' if running else 'no'}")
     print("pet: codex-woodling")
     if pid:
         print(f"{'pid' if running else 'last pid'}: {pid}")
     payload_time = float(payload.get("sentAt") or 0)
-    if payload.get("state") and payload_time >= runtime_time - 0.5 and time.time() - payload_time <= MAX_ACTIVITY_AGE_SECONDS:
+    if running and payload.get("state") and payload_time >= runtime_time - 0.5 and time.time() - payload_time <= MAX_ACTIVITY_AGE_SECONDS:
         print(f"last state: {payload.get('state')}")
-    if runtime.get("state"):
+    if running and runtime.get("state"):
         print(f"current visual state: {runtime.get('state')}")
     sent_at = float(activity.get("sentAt") or 0)
-    if activity.get("state") and sent_at >= runtime_time - 0.5 and time.time() - sent_at <= MAX_ACTIVITY_AGE_SECONDS:
+    if running and activity.get("state") and sent_at >= runtime_time - 0.5 and time.time() - sent_at <= MAX_ACTIVITY_AGE_SECONDS:
         print(f"last codex activity: {activity.get('state')}")
+    if not running:
+        print(f"runtime log: {RUNTIME_LOG_PATH}")
 
 
 def last_codex_activity_time(started_at=0.0):
@@ -286,6 +317,8 @@ def drain_socket(sock):
 
 
 def start_detached():
+    if runtime_is_live(read_pid()):
+        return
     py = sys.executable or "python"
     if os.name == "nt":
         pyw = os.path.join(os.path.dirname(py), "pythonw.exe")
@@ -365,11 +398,13 @@ class WoodlingApp(tk.Tk):
         self.codex_alive_cached = True
         self.user_wake_until = 0.0
         self.pending_success_at = 0.0
+        self.last_heartbeat = 0.0
 
         self.bind("<ButtonPress-1>", self.start_drag)
         self.bind("<B1-Motion>", self.drag)
         self.bind("<ButtonRelease-1>", self.release_drag)
         self.bind("<ButtonPress-3>", self.menu)
+        self.protocol("WM_DELETE_WINDOW", self.shutdown)
 
         self.place_on_floor()
         self.after(FPS_MS, self.tick)
@@ -526,6 +561,9 @@ class WoodlingApp(tk.Tk):
             self.status = "idle"
             write_runtime_status(self.status)
             self.forced_until = 0.0
+        if now - self.last_heartbeat >= HEARTBEAT_SECONDS:
+            write_runtime_status(self.status)
+            self.last_heartbeat = now
         self.monitor_codex(now)
 
         bpm = {
@@ -616,8 +654,29 @@ class WoodlingApp(tk.Tk):
         for state in ("idle", "sleeping", "thinking", "coding", "terminal", "searching", "success", "error"):
             menu.add_command(label=state.title(), command=lambda s=state: self.set_state(s, 6))
         menu.add_separator()
-        menu.add_command(label="Quit", command=self.destroy)
+        menu.add_command(label="Quit", command=self.shutdown)
         menu.tk_popup(event.x_root, event.y_root)
+
+    def report_callback_exception(self, exc, value, tb):
+        log_runtime_error("".join(traceback.format_exception(exc, value, tb)))
+
+    def shutdown(self):
+        try:
+            self.server.close()
+        except Exception:
+            pass
+        try:
+            if read_pid() == os.getpid():
+                os.remove(PID_PATH)
+        except OSError:
+            pass
+        try:
+            runtime = read_json_file(RUNTIME_STATUS_PATH) or {}
+            if int(runtime.get("pid") or 0) == os.getpid():
+                os.remove(RUNTIME_STATUS_PATH)
+        except (OSError, TypeError, ValueError):
+            pass
+        self.destroy()
 
 
 def usage():
@@ -627,7 +686,7 @@ def usage():
 
 def stop_existing():
     pid = read_pid()
-    if pid:
+    if pid and runtime_is_live(pid):
         if os.name == "nt":
             subprocess.call(["taskkill", "/PID", str(pid), "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
@@ -635,18 +694,33 @@ def stop_existing():
                 os.kill(pid, 15)
             except OSError:
                 pass
+        time.sleep(0.2)
+        for path in (PID_PATH, RUNTIME_STATUS_PATH):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         return
     if os.name == "nt":
+        app_path = os.path.realpath(__file__).replace("'", "''")
         subprocess.call(
             [
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*tung tung tung sahur pet*app.py*' -or $_.CommandLine -like '*woodlingctl.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+                f"$target = '{app_path}'; "
+                "Get-CimInstance Win32_Process | "
+                "Where-Object { $_.Name -in @('python.exe','pythonw.exe') -and $_.CommandLine -and $_.CommandLine.Contains($target) } | "
+                "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+    for path in (PID_PATH, RUNTIME_STATUS_PATH):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def main():
@@ -657,8 +731,14 @@ def main():
             return 1
         try:
             app = WoodlingApp()
-        except OSError:
-            return 0
+        except OSError as exc:
+            if runtime_is_live(read_pid()):
+                return 0
+            log_runtime_error("".join(traceback.format_exception(exc)))
+            return 1
+        except Exception as exc:
+            log_runtime_error("".join(traceback.format_exception(exc)))
+            return 1
         app.mainloop()
         return 0
 

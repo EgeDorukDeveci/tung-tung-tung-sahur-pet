@@ -58,40 +58,64 @@ def write_activity(activity, seconds, event, detail=""):
 
 
 def classify(event):
-    name = event.get("hook_event_name", "")
-    tool = event.get("tool_name", "")
+    name = str(event.get("hook_event_name") or "")
+    event_key = name.replace("_", "").lower()
+    tool = str(event.get("tool_name") or "")
+    tool_key = tool.lower()
     tool_input = event.get("tool_input") or {}
     command = ""
     if isinstance(tool_input, dict):
-        command = str(tool_input.get("command") or "")
+        command = str(tool_input.get("command") or tool_input.get("cmd") or "")
     low = command.lower()
 
-    if name == "UserPromptSubmit":
+    if event_key == "userpromptsubmit":
         return "thinking", 45, "prompt"
-    if name == "Stop":
+    if event_key == "stop":
         return "success", 5, "turn-finished"
-    if name == "PreToolUse":
-        if tool in {"apply_patch", "Edit", "Write"}:
+    if event_key == "pretooluse":
+        if any(word in tool_key for word in ("apply_patch", "edit", "write")) or "apply_patch" in low:
             return "coding", 5, tool
-        if tool == "Bash":
-            search_words = ("rg ", "grep", "find ", "ls", "dir", "cat ", "sed ", "head ", "tail ", "git show", "git diff", "git status")
-            code_words = ("apply_patch", "python", "py ", "npm", "pnpm", "node", "pytest", "ruff", "tsc", "build", "git commit")
-            if any(word in low for word in search_words):
-                return "searching", 4, command[:90]
-            if any(word in low for word in code_words):
-                return "terminal", 4, command[:90]
+        search_tools = ("search", "read", "list", "glob", "grep", "find", "view_image", "web")
+        search_words = (
+            "rg ",
+            "grep",
+            "find ",
+            "get-childitem",
+            "ls",
+            "dir",
+            "get-content",
+            "cat ",
+            "sed ",
+            "head ",
+            "tail ",
+            "git show",
+            "git diff",
+            "git status",
+        )
+        if any(word in tool_key for word in search_tools) or any(word in low for word in search_words):
+            return "searching", 4, (command or tool)[:90]
+        if any(word in tool_key for word in ("bash", "shell", "command", "exec", "terminal")) or command:
             return "terminal", 4, command[:90]
         return "thinking", 4, tool
-    if name == "PostToolUse":
+    if event_key == "posttooluse":
         return "thinking", 2, tool
     return "idle", 4, name or "unknown"
 
 
-def main():
+def read_event():
     try:
-        event = json.load(sys.stdin)
+        raw = sys.stdin.buffer.read()
+        if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+            text = raw.decode("utf-16")
+        else:
+            text = raw.decode("utf-8-sig")
+        return json.loads(text)
     except Exception:
-        event = {}
+        return {}
+
+
+def main():
+    event = read_event()
     activity, seconds, detail = classify(event)
     hook_name = event.get("hook_event_name", "unknown")
     write_activity(activity, seconds, hook_name, detail)
